@@ -96,6 +96,11 @@ data
 /train_dir
 /tb
 
+# Local Python environments
+/.conda/
+/.conda-mamba/
+/.conda.interrupted-*/
+
 # HITL outputs
 /hitl_output*
 
