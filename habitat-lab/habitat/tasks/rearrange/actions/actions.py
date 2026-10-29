@@ -539,6 +539,73 @@ class BaseVelAction(ArticulatedAgentAction):
 
 
 @registry.register_task_action
+class Go2BaseVelAction(BaseVelAction):
+    """Move the base on the NavMesh and animate Go2's legs each step."""
+
+    _velocity_response_time = 0.18
+    _velocity_epsilon = 1e-4
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Go2's URDF frame is rotated to Habitat's Y-up frame on the root
+        # node. A local Y angular velocity would therefore roll the robot.
+        self.base_vel_ctrl.ang_vel_is_local = False
+        self._smoothed_linear_velocity = 0.0
+        self._smoothed_angular_velocity = 0.0
+
+    def reset(self, *args, **kwargs):
+        super().reset(*args, **kwargs)
+        self._smoothed_linear_velocity = 0.0
+        self._smoothed_angular_velocity = 0.0
+
+    def step(self, *args, **kwargs):
+        lin_vel, ang_vel = kwargs[
+            self._action_arg_prefix + "base_vel"
+        ]
+        target_lin_vel = float(np.clip(lin_vel, -1, 1) * self._lin_speed)
+        target_ang_vel = float(np.clip(ang_vel, -1, 1) * self._ang_speed)
+        if not self._allow_back:
+            target_lin_vel = np.maximum(target_lin_vel, 0)
+
+        dt = 1.0 / self._sim.ctrl_freq
+        blend = 1.0 - np.exp(-dt / self._velocity_response_time)
+        self._smoothed_linear_velocity += blend * (
+            target_lin_vel - self._smoothed_linear_velocity
+        )
+        self._smoothed_angular_velocity += blend * (
+            target_ang_vel - self._smoothed_angular_velocity
+        )
+        if (
+            abs(self._smoothed_linear_velocity)
+            < self._velocity_epsilon
+        ):
+            self._smoothed_linear_velocity = 0.0
+        if (
+            abs(self._smoothed_angular_velocity)
+            < self._velocity_epsilon
+        ):
+            self._smoothed_angular_velocity = 0.0
+
+        self.base_vel_ctrl.linear_velocity = mn.Vector3(
+            self._smoothed_linear_velocity, 0, 0
+        )
+        self.base_vel_ctrl.angular_velocity = mn.Vector3(
+            0, self._smoothed_angular_velocity, 0
+        )
+        if (
+            self._smoothed_linear_velocity != 0.0
+            or self._smoothed_angular_velocity != 0.0
+        ):
+            self.update_base()
+        self.cur_articulated_agent.advance_gait(
+            self._smoothed_linear_velocity,
+            self._smoothed_angular_velocity,
+            dt,
+        )
+        self.cur_articulated_agent.align_to_ground()
+
+
+@registry.register_task_action
 class BaseVelNonCylinderAction(ArticulatedAgentAction):
     """
     The articulated agent base motion is constrained to the NavMesh and controlled with velocity commands integrated with the VelocityControl interface.

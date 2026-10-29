@@ -1,0 +1,11 @@
+# @package habitat.task.actions
+defaults:
+  - /habitat/task/actions:
+    - base_velocity
+    - empty
+  - _self_
+
+base_velocity:
+  type: Go2BaseVelAction
+  lin_speed: 0.5
+  ang_speed: 1.0

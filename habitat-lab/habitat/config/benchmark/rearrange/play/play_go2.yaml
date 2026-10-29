@@ -1,0 +1,33 @@
+# @package _global_
+defaults:
+  - /habitat: habitat_config_base
+  - /habitat/simulator: rearrange_sim
+  - /habitat/simulator/sensor_setups@habitat.simulator.agents.main_agent: rgbd_head_agent
+  - /habitat/simulator/agents@habitat.simulator.agents.main_agent: go2
+  - /habitat/task: task_config_base
+  - /habitat/task/rearrange/actions: go2_base_empty
+  - /habitat/task/measurements:
+    - articulated_agent_force
+    - zero
+  - /habitat/dataset/rearrangement: replica_cad
+  - _self_
+
+habitat:
+  task:
+    type: RearrangeEmptyTask-v0
+    count_obj_collisions: true
+    desired_resting_position: [0.5, 0.0, 1.0]
+    reward_measure: "zero"
+    success_measure: "zero"
+    render_target: false
+    force_regenerate: true
+  environment:
+    max_episode_steps: 0
+  simulator:
+    type: RearrangeSim-v0
+    seed: 100
+    ctrl_freq: 30.0
+    habitat_sim_v0:
+      enable_physics: true
+  dataset:
+    data_path: data/datasets/replica_cad/rearrange/v2/{split}/empty_1k_100.json.gz

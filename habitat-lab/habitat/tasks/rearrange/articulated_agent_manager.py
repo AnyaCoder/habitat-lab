@@ -17,6 +17,7 @@ from habitat.articulated_agents.mobile_manipulator import MobileManipulator
 from habitat.articulated_agents.robots import (
     FetchRobot,
     FetchRobotNoWheels,
+    Go2Robot,
     SpotRobot,
     StretchRobot,
 )
