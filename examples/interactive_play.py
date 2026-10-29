@@ -7,7 +7,7 @@
 """
 Manually control the articulated agent to interact with the environment. Run as
 ```
-python examples/interative_play.py
+python examples/interactive_play.py
 ```
 
 To Run you need PyGame installed (to install run `pip install pygame==2.0.1`).
@@ -25,7 +25,7 @@ Controls:
 - I,J,K,L to move the articulated agent base around
 - PERIOD to print the current world coordinates of the articulated agent base.
 - Z to toggle the camera to free movement mode. When in free camera mode:
-    - W,S,A,D,Q,E to translate the camera
+    - Arrow keys and PageUp/PageDown to translate the camera
     - I,J,K,L,U,O to rotate the camera
     - B to reset the camera position
 - X to change the articulated agent that is being controlled (if there are multiple articulated agents).
@@ -34,6 +34,12 @@ Change the task with `--cfg benchmark/rearrange/close_cab.yaml` (choose any task
 
 Change the grip type:
 - Suction gripper `task.actions.arm_action.grip_controller "SuctionGraspAction"`
+
+For the Go2 split-screen mode:
+- `W/S` move forward and backward.
+- `A/D` turn left and right.
+- Arrow keys move the free camera, with `PageUp/PageDown` for elevation.
+- `I/K`, `U/O`, and `J/L` rotate the free camera.
 
 To record a video: `--save-obs` This will save the video to file under `data/vids/` specified by `--save-obs-fname` (by default `vid.mp4`).
 
@@ -51,10 +57,12 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List
 
+import cv2
 import magnum as mn
 import numpy as np
 
 import habitat
+import habitat_sim
 import habitat.tasks.rearrange.rearrange_task
 from habitat.articulated_agent_controllers import HumanoidRearrangeController
 from habitat.config.default import get_agent_config
@@ -157,17 +165,28 @@ def get_input_vel_ctlr(
 
     if not_block_input:
         # Base control
-        if keys[pygame.K_j]:
-            # Left
+        if "go2" in cfg:
+            left, right, back, forward = (
+                pygame.K_a,
+                pygame.K_d,
+                pygame.K_s,
+                pygame.K_w,
+            )
+        else:
+            left, right, back, forward = (
+                pygame.K_j,
+                pygame.K_l,
+                pygame.K_k,
+                pygame.K_i,
+            )
+
+        if keys[left]:
             base_action = [0, 1]
-        elif keys[pygame.K_l]:
-            # Right
+        elif keys[right]:
             base_action = [0, -1]
-        elif keys[pygame.K_k]:
-            # Back
+        elif keys[back]:
             base_action = [-1, 0]
-        elif keys[pygame.K_i]:
-            # Forward
+        elif keys[forward]:
             base_action = [1, 0]
 
         if arm_action_space.shape[0] == 7:
@@ -393,22 +412,39 @@ def get_wrapped_prop(venv, prop):
 
 
 class FreeCamHelper:
-    def __init__(self):
+    _MOVE_STEP = 0.1
+    _ROTATE_STEP = 0.1
+
+    def __init__(self, sensor_name):
         self._is_free_cam_mode = False
         self._last_pressed = 0
-        self._free_rpy = np.zeros(3)
-        self._free_xyz = np.zeros(3)
+        self._initial_transform = None
+        self._free_position = mn.Vector3.zero_init()
+        self._free_quat = mn.Quaternion()
+        self._pressed = set()
+        self._sensor_name = sensor_name
 
     @property
     def is_free_cam_mode(self):
         return self._is_free_cam_mode
 
-    def update(self, env, step_result, update_idx):
+    def handle_events(self, events):
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                self._pressed.add(event.key)
+            elif event.type == pygame.KEYUP:
+                self._pressed.discard(event.key)
+            elif event.type == pygame.WINDOWFOCUSLOST:
+                self._pressed.clear()
+
+    def update(self, env, update_idx):
         keys = pygame.key.get_pressed()
         if keys[pygame.K_z] and (update_idx - self._last_pressed) > 60:
             self._is_free_cam_mode = not self._is_free_cam_mode
             logger.info(f"Switching camera mode to {self._is_free_cam_mode}")
             self._last_pressed = update_idx
+            if self._is_free_cam_mode:
+                self._set_to_sensor(env)
 
         if self._is_free_cam_mode:
             offset_rpy = np.zeros(3)
@@ -426,36 +462,184 @@ class FreeCamHelper:
                 offset_rpy[0] -= 1
 
             offset_xyz = np.zeros(3)
-            if keys[pygame.K_q]:
+            if pygame.K_PAGEUP in self._pressed:
                 offset_xyz[1] += 1
-            elif keys[pygame.K_e]:
+            if pygame.K_PAGEDOWN in self._pressed:
                 offset_xyz[1] -= 1
-            elif keys[pygame.K_w]:
-                offset_xyz[2] += 1
-            elif keys[pygame.K_s]:
+            if pygame.K_UP in self._pressed:
                 offset_xyz[2] -= 1
-            elif keys[pygame.K_a]:
-                offset_xyz[0] += 1
-            elif keys[pygame.K_d]:
+            if pygame.K_DOWN in self._pressed:
+                offset_xyz[2] += 1
+            if pygame.K_LEFT in self._pressed:
                 offset_xyz[0] -= 1
-            offset_rpy *= 0.1
-            offset_xyz *= 0.1
-            self._free_rpy += offset_rpy
-            self._free_xyz += offset_xyz
+            if pygame.K_RIGHT in self._pressed:
+                offset_xyz[0] += 1
+            if np.any(offset_rpy):
+                rotation_delta = euler_to_quat(
+                    offset_rpy * self._ROTATE_STEP
+                )
+                self._free_quat = self._free_quat * rotation_delta
+            if np.any(offset_xyz):
+                local_step = mn.Vector3(*offset_xyz)
+                self._free_position += (
+                    self._free_quat.transform_vector(local_step)
+                    * self._MOVE_STEP
+                )
             if keys[pygame.K_b]:
-                self._free_rpy = np.zeros(3)
-                self._free_xyz = np.zeros(3)
+                self._free_position = mn.Vector3(
+                    self._initial_transform.translation
+                )
+                self._free_quat = mn.Quaternion.from_matrix(
+                    self._initial_transform.rotation()
+                )
 
-            quat = euler_to_quat(self._free_rpy)
-            trans = mn.Matrix4.from_(
-                quat.to_matrix(), mn.Vector3(*self._free_xyz)
-            )
-            env._sim.get_sensor(
-                "third_rgb"
-            ).sensor_object.node.transformation = trans
-            step_result = env._sim.get_sensor_observations()
-            return step_result
-        return step_result
+            self.apply_transform(env)
+
+    def apply_transform(self, env):
+        camera_transform = mn.Matrix4.from_(
+            self._free_quat.to_matrix(), self._free_position
+        )
+        set_visual_sensor_transform(env, self._sensor_name, camera_transform)
+
+    def set_view(self, env, camera_transform):
+        self._initial_transform = camera_transform
+        self._free_position = mn.Vector3(camera_transform.translation)
+        self._free_quat = mn.Quaternion.from_matrix(
+            camera_transform.rotation()
+        )
+        self._is_free_cam_mode = True
+        self.apply_transform(env)
+
+    def _set_to_sensor(self, env):
+        sensor = env._sim.get_sensor(self._sensor_name).sensor_object
+        self._initial_transform = (
+            sensor.render_camera.camera_matrix.inverted()
+        )
+        self._free_position = mn.Vector3(
+            self._initial_transform.translation
+        )
+        self._free_quat = mn.Quaternion.from_matrix(
+            self._initial_transform.rotation()
+        )
+        self.apply_transform(env)
+
+
+GO2_GAME_WIDTH = 800
+GO2_GAME_HEIGHT = 900
+GO2_RENDER_WIDTH = 480
+GO2_RENDER_HEIGHT = 540
+GO2_FOLLOW_BACK_OFFSET = 0.5
+GO2_FOLLOW_UP_OFFSET = 0.35
+
+
+def add_go2_game_cameras(env):
+    for sensor_uuid in ("game_rgb", "free_rgb"):
+        sensor_spec = habitat_sim.CameraSensorSpec()
+        sensor_spec.uuid = sensor_uuid
+        sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
+        sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+        sensor_spec.resolution = [
+            GO2_RENDER_HEIGHT,
+            GO2_RENDER_WIDTH,
+        ]
+        env._sim.add_sensor(sensor_spec)
+
+
+def set_visual_sensor_transform(
+    env, sensor_uuid, global_camera_transform
+):
+    sensor_object = env._sim.get_sensor(sensor_uuid)._sensor_object
+    render_camera = sensor_object.render_camera
+    cumulative_transform = mn.Matrix4.identity_init()
+    node = render_camera.node.parent
+    while node is not None and hasattr(node, "transformation"):
+        cumulative_transform @= node.transformation
+        node = node.parent
+    render_camera.node.transformation = (
+        cumulative_transform.inverted() @ global_camera_transform
+    )
+
+
+def get_go2_game_observations(env):
+    observations = {}
+    for sensor_uuid in ("game_rgb", "free_rgb"):
+        sensor = env._sim.get_sensor(sensor_uuid)
+        sensor.draw_observation()
+        observations[sensor_uuid] = sensor.get_observation()
+    return observations
+
+
+def get_go2_follow_camera_transform(env):
+    robot = env._sim.articulated_agent
+    robot_transform = robot.sim_obj.transformation
+    local_center = (
+        robot.sim_obj.root_scene_node.cumulative_bb.center()
+    )
+    robot_position = robot_transform.transform_point(
+        mn.Vector3(local_center)
+    )
+    forward = robot_transform.transform_vector(
+        mn.Vector3(1.0, 0.0, 0.0)
+    ).normalized()
+    up = mn.Vector3(0.0, 1.0, 0.0)
+    eye = (
+        robot_position
+        - forward * GO2_FOLLOW_BACK_OFFSET
+        + up * GO2_FOLLOW_UP_OFFSET
+    )
+    foot_height = float(
+        np.median([position.y for position in robot.foot_positions()])
+    )
+    target = mn.Vector3(
+        robot_position.x,
+        (robot_position.y + foot_height) * 0.5,
+        robot_position.z,
+    )
+    return mn.Matrix4.look_at(eye, target, up)
+
+
+def update_go2_follow_camera(env):
+    set_visual_sensor_transform(
+        env,
+        "game_rgb",
+        get_go2_follow_camera_transform(env),
+    )
+
+
+def get_go2_split_view(obs, free_sensor_name):
+    left = obs["game_rgb"][:, :, :3]
+    right = obs[free_sensor_name][:, :, :3]
+    left = cv2.resize(
+        left,
+        (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    right = cv2.resize(
+        right,
+        (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    return np.concatenate((left, right), axis=1)
+
+
+def place_go2_at_scene_center(env):
+    robot = env._sim.articulated_agent
+    lower_bound, upper_bound = env._sim.pathfinder.get_bounds()
+    scene_center = (lower_bound + upper_bound) * 0.5
+    scene_center.y = robot.base_pos.y
+    snapped_position = env._sim.pathfinder.snap_point(scene_center)
+    if np.all(
+        np.isfinite(
+            [
+                snapped_position.x,
+                snapped_position.y,
+                snapped_position.z,
+            ]
+        )
+    ):
+        snapped_position.y = robot.base_pos.y
+        robot.base_pos = snapped_position
+        robot.align_to_ground()
 
 
 def play_env(env, args, config):
@@ -470,23 +654,45 @@ def play_env(env, args, config):
             logger.info("Loaded arm actions")
 
     obs = env.reset()
+    if args.go2_game:
+        add_go2_game_cameras(env)
+    free_cam_sensor_name = (
+        "free_rgb"
+        if args.go2_game
+        else ("third_rgb" if "third_rgb" in obs else "head_rgb_sensor")
+    )
+    free_cam = FreeCamHelper(free_cam_sensor_name)
 
     if not args.no_render:
-        draw_obs = observations_to_image(obs, {})
-        pygame.init()
-        screen = pygame.display.set_mode(
-            [draw_obs.shape[1], draw_obs.shape[0]]
-        )
+        if args.go2_game:
+            screen = pygame.display.set_mode(
+                [GO2_GAME_WIDTH * 2, GO2_GAME_HEIGHT]
+            )
+        else:
+            draw_obs = observations_to_image(obs, {})
+            screen = pygame.display.set_mode(
+                [draw_obs.shape[1], draw_obs.shape[0]]
+            )
+
+    if args.go2_game:
+        place_go2_at_scene_center(env)
+        update_go2_follow_camera(env)
+        free_cam.set_view(env, get_go2_follow_camera_transform(env))
+        obs = get_go2_game_observations(env)
+
+    if not args.no_render and args.go2_game:
+        draw_obs = get_go2_split_view(obs, free_cam_sensor_name)
 
     update_idx = 0
-    target_fps = 60.0
+    target_fps = 30.0 if args.go2_game else 60.0
     prev_time = time.time()
+    fps_measure_start = prev_time
+    fps_measure_frames = 0
     all_obs = []
     total_reward = 0
     all_arm_actions: List[float] = []
     agent_to_control = 0
 
-    free_cam = FreeCamHelper()
     gfx_measure = env.task.measurements.measures.get(
         GfxReplayMeasure.cls_uuid, None
     )
@@ -498,6 +704,8 @@ def play_env(env, args, config):
         humanoid_controller.reset(env._sim.articulated_agent.base_pos)
 
     while True:
+        if not args.no_render:
+            free_cam.handle_events(pygame.event.get())
         if (
             args.save_actions
             and len(all_arm_actions) > args.save_actions_count
@@ -519,6 +727,7 @@ def play_env(env, args, config):
                 f"Controlled agent changed. Controlling agent {agent_to_control}."
             )
 
+        allow_robot_input = args.go2_game or not free_cam.is_free_cam_mode
         step_result, arm_action, end_ep = get_input_vel_ctlr(
             args.no_render,
             args.cfg,
@@ -526,13 +735,17 @@ def play_env(env, args, config):
             if use_arm_actions is not None
             else None,
             env,
-            not free_cam.is_free_cam_mode,
+            allow_robot_input,
             agent_to_control,
             args.control_humanoid,
             humanoid_controller=humanoid_controller,
         )
 
-        if not args.no_render and keys[pygame.K_c]:
+        if (
+            not args.no_render
+            and keys[pygame.K_c]
+            and "pddl_apply_action" in env.task.actions
+        ):
             pddl_action = env.task.actions["pddl_apply_action"]
             logger.info("Actions:")
             actions = pddl_action._action_ordering
@@ -552,7 +765,11 @@ def play_env(env, args, config):
 
             step_env(env, "pddl_apply_action", {"pddl_action": ac})
 
-        if not args.no_render and keys[pygame.K_g]:
+        if (
+            not args.no_render
+            and keys[pygame.K_g]
+            and "all_predicates" in env.task.sensor_suite.sensors
+        ):
             pred_list = env.task.sensor_suite.sensors[
                 "all_predicates"
             ]._predicates_list
@@ -574,7 +791,10 @@ def play_env(env, args, config):
             env.reset()
 
         if not args.no_render:
-            step_result = free_cam.update(env, step_result, update_idx)
+            free_cam.update(env, update_idx)
+        if args.go2_game:
+            update_go2_follow_camera(env)
+            step_result.update(get_go2_game_observations(env))
 
         all_arm_actions.append(arm_action)
         update_idx += 1
@@ -592,10 +812,15 @@ def play_env(env, args, config):
         total_reward += reward
         info["Total Reward"] = total_reward
 
-        if free_cam.is_free_cam_mode:
-            cam = obs["third_rgb"]
-            use_ob = np.zeros(draw_obs.shape)
-            use_ob[:, : cam.shape[1]] = cam[:, :, :3]
+        if args.go2_game:
+            use_ob = get_go2_split_view(obs, free_cam_sensor_name)
+        elif free_cam.is_free_cam_mode:
+            cam = obs[free_cam_sensor_name][:, :, :3]
+            use_ob = cv2.resize(
+                cam,
+                (draw_obs.shape[1], draw_obs.shape[0]),
+                interpolation=cv2.INTER_LINEAR,
+            )
 
         else:
             use_ob = observations_to_image(obs, info)
@@ -623,6 +848,15 @@ def play_env(env, args, config):
         delay = max(1.0 / target_fps - diff, 0)
         time.sleep(delay)
         prev_time = curr_time
+        fps_measure_frames += 1
+        measured_elapsed = time.time() - fps_measure_start
+        if not args.no_render and measured_elapsed >= 1.0:
+            measured_fps = fps_measure_frames / measured_elapsed
+            pygame.display.set_caption(
+                f"Habitat interactive play - {measured_fps:.0f} FPS"
+            )
+            fps_measure_start = time.time()
+            fps_measure_frames = 0
 
     if args.save_actions:
         if len(all_arm_actions) < args.save_actions_count:
@@ -692,6 +926,12 @@ if __name__ == "__main__":
         help="If true, then do not add the render camera for better visualization",
     )
     parser.add_argument(
+        "--go2-game",
+        action="store_true",
+        default=False,
+        help="Show a split view with a Go2 follow camera and a free camera.",
+    )
+    parser.add_argument(
         "--skip-task",
         action="store_true",
         default=False,
@@ -746,6 +986,8 @@ if __name__ == "__main__":
         raise ImportError(
             "Need to install PyGame (run `pip install pygame==2.0.1`)"
         )
+    if not args.no_render:
+        pygame.init()
 
     config = habitat.get_config(args.cfg, args.opts)
     with habitat.config.read_write(config):
@@ -756,13 +998,15 @@ if __name__ == "__main__":
         if not args.same_task:
             sim_config.debug_render = True
             agent_config = get_agent_config(sim_config=sim_config)
-            agent_config.sim_sensors.update(
-                {
-                    "third_rgb_sensor": ThirdRGBSensorConfig(
-                        height=args.play_cam_res, width=args.play_cam_res
-                    )
-                }
-            )
+            if not args.go2_game:
+                agent_config.sim_sensors.update(
+                    {
+                        "third_rgb_sensor": ThirdRGBSensorConfig(
+                            height=args.play_cam_res,
+                            width=args.play_cam_res,
+                        )
+                    }
+                )
             if "pddl_success" in task_config.measurements:
                 task_config.measurements.pddl_success.must_call_stop = False
             if "rearrange_nav_to_obj_success" in task_config.measurements:
