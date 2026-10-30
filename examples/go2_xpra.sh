@@ -6,6 +6,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 python_bin="${HABITAT_PYTHON:-$repo_root/.conda/bin/python}"
+if [[ -z "${DISPLAY:-}" ]]; then
+  echo "DISPLAY is not set; run this script inside Xpra or an X11 session." >&2
+  exit 1
+fi
 if [[ ! -x "$python_bin" ]]; then
   echo "Habitat Python not found: $python_bin" >&2
   echo "Set HABITAT_PYTHON to a Python executable with Habitat installed." >&2

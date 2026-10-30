@@ -13,19 +13,21 @@ from pathlib import Path
 import pygame
 
 
-def main():
-    project_root = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+INTERACTIVE_PLAY = PROJECT_ROOT / "examples" / "interactive_play.py"
+GO2_ARGS = (
+    "--cfg",
+    "benchmark/rearrange/play/play_go2.yaml",
+    "--disable-inverse-kinematics",
+    "--go2-game",
+)
 
+
+def main() -> None:
     # SDL must initialize before habitat_sim loads the GL/X11 libraries.
     # Initializing it later can segfault when the process runs inside Xpra.
     pygame.init()
-    sys.argv = [
-        str(project_root / "examples" / "interactive_play.py"),
-        "--cfg",
-        "benchmark/rearrange/play/play_go2.yaml",
-        "--disable-inverse-kinematics",
-        "--go2-game",
-    ]
+    sys.argv = [str(INTERACTIVE_PLAY), *GO2_ARGS]
     runpy.run_path(sys.argv[0], run_name="__main__")
 
 
