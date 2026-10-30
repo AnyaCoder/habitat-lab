@@ -553,12 +553,8 @@ def set_visual_sensor_transform(
 
 
 def get_go2_game_observations(env):
-    observations = {}
-    for sensor_uuid in GO2_SENSORS:
-        sensor = env._sim.get_sensor(sensor_uuid)
-        sensor.draw_observation()
-        observations[sensor_uuid] = sensor.get_observation()
-    return observations
+    env._sim.start_async_render()
+    return env._sim.get_sensor_observations_async_finish()
 
 
 def get_go2_follow_camera_transform(env):

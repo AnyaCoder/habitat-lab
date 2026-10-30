@@ -2,7 +2,6 @@
 defaults:
   - /habitat: habitat_config_base
   - /habitat/simulator: rearrange_sim
-  - /habitat/simulator/sensor_setups@habitat.simulator.agents.main_agent: rgbd_head_agent
   - /habitat/simulator/agents@habitat.simulator.agents.main_agent: go2
   - /habitat/task: task_config_base
   - /habitat/task/rearrange/actions: go2_base_empty
