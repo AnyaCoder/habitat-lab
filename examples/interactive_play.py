@@ -524,17 +524,17 @@ GO2_FREE_SENSOR = "free_rgb"
 GO2_SENSORS = (GO2_FOLLOW_SENSOR, GO2_FREE_SENSOR)
 
 
-def add_go2_game_cameras(env):
-    for sensor_uuid in GO2_SENSORS:
-        sensor_spec = habitat_sim.CameraSensorSpec()
-        sensor_spec.uuid = sensor_uuid
-        sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
-        sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
-        sensor_spec.resolution = [
-            GO2_RENDER_HEIGHT,
-            GO2_RENDER_WIDTH,
-        ]
-        env._sim.add_sensor(sensor_spec)
+def add_go2_game_sensor_configs(agent_config):
+    agent_config.sim_sensors.update(
+        {
+            f"{sensor_uuid}_sensor": ThirdRGBSensorConfig(
+                uuid=sensor_uuid,
+                width=GO2_RENDER_WIDTH,
+                height=GO2_RENDER_HEIGHT,
+            )
+            for sensor_uuid in GO2_SENSORS
+        }
+    )
 
 
 def set_visual_sensor_transform(
@@ -669,8 +669,6 @@ def play_env(env, args, config):
             logger.info("Loaded arm actions")
 
     obs = env.reset()
-    if args.go2_game:
-        add_go2_game_cameras(env)
     free_cam_sensor_name = (
         GO2_FREE_SENSOR
         if args.go2_game
@@ -1017,10 +1015,13 @@ if __name__ == "__main__":
         env_config = config.habitat.environment
         sim_config = config.habitat.simulator
         task_config = config.habitat.task
+        agent_config = get_agent_config(sim_config=sim_config)
+
+        if args.go2_game:
+            add_go2_game_sensor_configs(agent_config)
 
         if not args.same_task:
             sim_config.debug_render = True
-            agent_config = get_agent_config(sim_config=sim_config)
             if not args.go2_game:
                 agent_config.sim_sensors.update(
                     {
