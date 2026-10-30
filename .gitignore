@@ -98,8 +98,10 @@ data
 
 # Local Python environments
 /.conda/
+/.conda-xpra-client/
 /.conda-mamba/
 /.conda.interrupted-*/
+/.xpra-client-deps/
 
 # HITL outputs
 /hitl_output*
