@@ -14,4 +14,12 @@ export SDL_VIDEODRIVER=x11
 export SDL_RENDER_DRIVER=software
 export SDL_FRAMEBUFFER_ACCELERATION=0
 
-exec "$repo_root/.conda/bin/python" "$repo_root/examples/go2_xpra.py"
+exec "$repo_root/.conda/bin/python" \
+  "$repo_root/examples/interactive_play.py" \
+  --cfg benchmark/rearrange/play/play_go2.yaml \
+  --disable-inverse-kinematics \
+  --go2-game \
+  habitat.simulator.agents.main_agent.sim_sensors.head_rgb_sensor.width=64 \
+  habitat.simulator.agents.main_agent.sim_sensors.head_rgb_sensor.height=64 \
+  habitat.simulator.agents.main_agent.sim_sensors.head_depth_sensor.width=64 \
+  habitat.simulator.agents.main_agent.sim_sensors.head_depth_sensor.height=64

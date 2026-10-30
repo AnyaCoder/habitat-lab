@@ -530,10 +530,13 @@ GO2_RENDER_WIDTH = 480
 GO2_RENDER_HEIGHT = 540
 GO2_FOLLOW_BACK_OFFSET = 0.5
 GO2_FOLLOW_UP_OFFSET = 0.35
+GO2_FOLLOW_SENSOR = "game_rgb"
+GO2_FREE_SENSOR = "free_rgb"
+GO2_SENSORS = (GO2_FOLLOW_SENSOR, GO2_FREE_SENSOR)
 
 
 def add_go2_game_cameras(env):
-    for sensor_uuid in ("game_rgb", "free_rgb"):
+    for sensor_uuid in GO2_SENSORS:
         sensor_spec = habitat_sim.CameraSensorSpec()
         sensor_spec.uuid = sensor_uuid
         sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
@@ -562,7 +565,7 @@ def set_visual_sensor_transform(
 
 def get_go2_game_observations(env):
     observations = {}
-    for sensor_uuid in ("game_rgb", "free_rgb"):
+    for sensor_uuid in GO2_SENSORS:
         sensor = env._sim.get_sensor(sensor_uuid)
         sensor.draw_observation()
         observations[sensor_uuid] = sensor.get_observation()
@@ -601,14 +604,14 @@ def get_go2_follow_camera_transform(env):
 def update_go2_follow_camera(env):
     set_visual_sensor_transform(
         env,
-        "game_rgb",
+        GO2_FOLLOW_SENSOR,
         get_go2_follow_camera_transform(env),
     )
 
 
-def get_go2_split_view(obs, free_sensor_name):
-    left = obs["game_rgb"][:, :, :3]
-    right = obs[free_sensor_name][:, :, :3]
+def get_go2_split_view(obs):
+    left = obs[GO2_FOLLOW_SENSOR][:, :, :3]
+    right = obs[GO2_FREE_SENSOR][:, :, :3]
     left = cv2.resize(
         left,
         (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
@@ -657,7 +660,7 @@ def play_env(env, args, config):
     if args.go2_game:
         add_go2_game_cameras(env)
     free_cam_sensor_name = (
-        "free_rgb"
+        GO2_FREE_SENSOR
         if args.go2_game
         else ("third_rgb" if "third_rgb" in obs else "head_rgb_sensor")
     )
@@ -681,7 +684,7 @@ def play_env(env, args, config):
         obs = get_go2_game_observations(env)
 
     if not args.no_render and args.go2_game:
-        draw_obs = get_go2_split_view(obs, free_cam_sensor_name)
+        draw_obs = get_go2_split_view(obs)
 
     update_idx = 0
     target_fps = 30.0 if args.go2_game else 60.0
@@ -813,7 +816,7 @@ def play_env(env, args, config):
         info["Total Reward"] = total_reward
 
         if args.go2_game:
-            use_ob = get_go2_split_view(obs, free_cam_sensor_name)
+            use_ob = get_go2_split_view(obs)
         elif free_cam.is_free_cam_mode:
             cam = obs[free_cam_sensor_name][:, :, :3]
             use_ob = cv2.resize(
