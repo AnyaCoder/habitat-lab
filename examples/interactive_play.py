@@ -514,25 +514,23 @@ class FreeCamHelper:
         self.apply_transform(env)
 
 
-GO2_GAME_WIDTH = 800
-GO2_GAME_HEIGHT = 900
-GO2_RENDER_WIDTH = GO2_GAME_WIDTH
-GO2_RENDER_HEIGHT = GO2_GAME_HEIGHT
-GO2_FOLLOW_SENSOR = "game_rgb"
-GO2_FREE_SENSOR = "free_rgb"
-GO2_SENSORS = (GO2_FOLLOW_SENSOR, GO2_FREE_SENSOR)
+GO2_VIEW_WIDTH = 800
+GO2_VIEW_HEIGHT = 900
+GO2_FOLLOW_CAMERA = "game_rgb"
+GO2_FREE_CAMERA = "free_rgb"
+GO2_CAMERAS = (GO2_FOLLOW_CAMERA, GO2_FREE_CAMERA)
 
 
-def add_go2_sensor_configs(agent_config):
+def configure_go2_sensors(agent_config):
     agent_config.sim_sensors["head_rgb_sensor"] = HeadRGBSensorConfig()
     agent_config.sim_sensors.update(
         {
             f"{sensor_uuid}_sensor": ThirdRGBSensorConfig(
                 uuid=sensor_uuid,
-                width=GO2_RENDER_WIDTH,
-                height=GO2_RENDER_HEIGHT,
+                width=GO2_VIEW_WIDTH,
+                height=GO2_VIEW_HEIGHT,
             )
-            for sensor_uuid in GO2_SENSORS
+            for sensor_uuid in GO2_CAMERAS
         }
     )
 
@@ -552,17 +550,17 @@ def set_visual_sensor_transform(
     )
 
 
-def get_sensor_observations(env):
+def render_go2_sensors(env):
     env._sim.start_async_render()
     return env._sim.get_sensor_observations_async_finish()
 
 
 def get_go2_view(obs, sensor_uuid):
     view = obs[sensor_uuid][:, :, :3]
-    if view.shape[:2] != (GO2_GAME_HEIGHT, GO2_GAME_WIDTH):
+    if view.shape[:2] != (GO2_VIEW_HEIGHT, GO2_VIEW_WIDTH):
         view = cv2.resize(
             view,
-            (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
+            (GO2_VIEW_WIDTH, GO2_VIEW_HEIGHT),
             interpolation=cv2.INTER_LINEAR,
         )
     return view
@@ -570,7 +568,7 @@ def get_go2_view(obs, sensor_uuid):
 
 def get_go2_split_view(obs):
     return np.concatenate(
-        [get_go2_view(obs, sensor_uuid) for sensor_uuid in GO2_SENSORS],
+        [get_go2_view(obs, sensor_uuid) for sensor_uuid in GO2_CAMERAS],
         axis=1,
     )
 
@@ -582,17 +580,17 @@ class Go2SplitPresenter:
         self._targets = tuple(
             screen.subsurface(
                 (
-                    index * GO2_GAME_WIDTH,
+                    index * GO2_VIEW_WIDTH,
                     0,
-                    GO2_GAME_WIDTH,
-                    GO2_GAME_HEIGHT,
+                    GO2_VIEW_WIDTH,
+                    GO2_VIEW_HEIGHT,
                 )
             )
-            for index in range(len(GO2_SENSORS))
+            for index in range(len(GO2_CAMERAS))
         )
 
     def draw(self, obs):
-        for sensor_uuid, target in zip(GO2_SENSORS, self._targets):
+        for sensor_uuid, target in zip(GO2_CAMERAS, self._targets):
             view = get_go2_view(obs, sensor_uuid)
             pygame.surfarray.blit_array(
                 target, np.transpose(view, (1, 0, 2))
@@ -633,7 +631,7 @@ def play_env(env, args, config):
 
     obs = env.reset()
     free_cam_sensor_name = (
-        GO2_FREE_SENSOR
+        GO2_FREE_CAMERA
         if args.go2_game
         else ("third_rgb" if "third_rgb" in obs else "head_rgb_sensor")
     )
@@ -643,7 +641,7 @@ def play_env(env, args, config):
     if not args.no_render:
         if args.go2_game:
             screen = pygame.display.set_mode(
-                [GO2_GAME_WIDTH * 2, GO2_GAME_HEIGHT]
+                [GO2_VIEW_WIDTH * 2, GO2_VIEW_HEIGHT]
             )
             go2_presenter = Go2SplitPresenter(screen)
         else:
@@ -657,7 +655,7 @@ def play_env(env, args, config):
         robot = env._sim.articulated_agent
         robot.update()
         free_cam.set_view(env, robot.follow_camera_transform)
-        obs = get_sensor_observations(env)
+        obs = render_go2_sensors(env)
 
     update_idx = 0
     target_fps = 30.0 if args.go2_game else 60.0
@@ -977,7 +975,7 @@ if __name__ == "__main__":
         agent_config = get_agent_config(sim_config=sim_config)
 
         if args.go2_game:
-            add_go2_sensor_configs(agent_config)
+            configure_go2_sensors(agent_config)
 
         if not args.same_task:
             sim_config.debug_render = True
