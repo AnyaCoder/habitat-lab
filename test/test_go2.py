@@ -4,10 +4,23 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import importlib.util
+from pathlib import Path
+
+import habitat
+import numpy as np
 import pytest
 
-from habitat.config.default import get_config
+from habitat.config.default import get_agent_config, get_config
 from habitat.tasks.rearrange.actions.actions import Go2BaseVelAction
+
+
+def _load_interactive_play():
+    path = Path(__file__).resolve().parents[1] / "examples/interactive_play.py"
+    spec = importlib.util.spec_from_file_location("interactive_play", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _make_go2_action(*, allow_back=True):
@@ -29,6 +42,43 @@ def test_go2_config_uses_kinematic_physics_and_action():
         == "Go2Robot"
     )
     assert config.habitat.task.actions.base_velocity.type == "Go2BaseVelAction"
+
+
+def test_go2_config_includes_head_and_split_cameras():
+    interactive_play = _load_interactive_play()
+    config = get_config("benchmark/rearrange/play/play_go2.yaml")
+
+    with habitat.config.read_write(config):
+        agent_config = get_agent_config(sim_config=config.habitat.simulator)
+        interactive_play.configure_go2_sensors(agent_config)
+
+        sensors = {
+            sensor.uuid: sensor for sensor in agent_config.sim_sensors.values()
+        }
+        assert set(sensors) == {"head_rgb", "game_rgb", "free_rgb"}
+        assert sensors["head_rgb"].width == 256
+        assert sensors["head_rgb"].height == 256
+        for name in ("game_rgb", "free_rgb"):
+            assert sensors[name].width == 800
+            assert sensors[name].height == 900
+
+
+def test_go2_split_view_layout():
+    interactive_play = _load_interactive_play()
+    observations = {
+        interactive_play.GO2_FOLLOW_CAMERA: np.zeros(
+            (900, 800, 3), dtype=np.uint8
+        ),
+        interactive_play.GO2_FREE_CAMERA: np.ones(
+            (900, 800, 3), dtype=np.uint8
+        ),
+    }
+
+    split_view = interactive_play.get_go2_split_view(observations)
+
+    assert split_view.shape == (900, 1600, 3)
+    assert np.all(split_view[:, :800] == 0)
+    assert np.all(split_view[:, 800:] == 1)
 
 
 def test_go2_velocity_targets_are_limited():
