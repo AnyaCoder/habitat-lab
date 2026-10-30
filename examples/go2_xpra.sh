@@ -5,6 +5,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+python_bin="${HABITAT_PYTHON:-$repo_root/.conda/bin/python}"
+if [[ ! -x "$python_bin" ]]; then
+  echo "Habitat Python not found: $python_bin" >&2
+  echo "Set HABITAT_PYTHON to a Python executable with Habitat installed." >&2
+  exit 1
+fi
+
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export PYTHONUNBUFFERED=1
 export PYTHONFAULTHANDLER=1
@@ -14,7 +21,7 @@ export SDL_VIDEODRIVER=x11
 export SDL_RENDER_DRIVER=software
 export SDL_FRAMEBUFFER_ACCELERATION=0
 
-exec "$repo_root/.conda/bin/python" \
+exec "$python_bin" \
   "$repo_root/examples/interactive_play.py" \
   --cfg benchmark/rearrange/play/play_go2.yaml \
   --disable-inverse-kinematics \
