@@ -37,6 +37,9 @@ class Go2Robot(MobileManipulator):
     _GAIT_FREQUENCY = 1.8
     _MAX_STRIDE = 0.08
     _FOOT_LIFT = 0.045
+    _FOLLOW_CAMERA_SENSOR = "game_rgb"
+    _FOLLOW_CAMERA_BACK_OFFSET = 0.5
+    _FOLLOW_CAMERA_UP_OFFSET = 0.35
     _stand_pose = [0.0, _STAND_THIGH, _STAND_KNEE] * 4
     _foot_link_names = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
 
@@ -118,6 +121,49 @@ class Go2Robot(MobileManipulator):
                 )
             )
         return positions
+
+    @property
+    def follow_camera_transform(self):
+        robot_transform = self.sim_obj.transformation
+        local_center = self.sim_obj.root_scene_node.cumulative_bb.center()
+        robot_position = robot_transform.transform_point(
+            mn.Vector3(local_center)
+        )
+        forward = robot_transform.transform_vector(
+            mn.Vector3.x_axis()
+        ).normalized()
+        up = mn.Vector3.y_axis()
+        eye = (
+            robot_position
+            - forward * self._FOLLOW_CAMERA_BACK_OFFSET
+            + up * self._FOLLOW_CAMERA_UP_OFFSET
+        )
+        foot_height = float(
+            np.median([position.y for position in self.foot_positions()])
+        )
+        target = mn.Vector3(
+            robot_position.x,
+            (robot_position.y + foot_height) * 0.5,
+            robot_position.z,
+        )
+        return mn.Matrix4.look_at(eye, target, up)
+
+    def update(self) -> None:
+        super().update()
+        if self._FOLLOW_CAMERA_SENSOR not in self._sim._sensors:
+            return
+        sensor = self._sim.get_sensor(
+            self._FOLLOW_CAMERA_SENSOR
+        )._sensor_object
+        render_camera = sensor.render_camera
+        cumulative_transform = mn.Matrix4.identity_init()
+        node = render_camera.node.parent
+        while node is not None and hasattr(node, "transformation"):
+            cumulative_transform @= node.transformation
+            node = node.parent
+        render_camera.node.transformation = (
+            cumulative_transform.inverted() @ self.follow_camera_transform
+        )
 
     def align_to_ground(self) -> None:
         """Put the four level feet on the support surface below them."""

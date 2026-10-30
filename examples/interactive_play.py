@@ -68,6 +68,7 @@ from habitat.articulated_agent_controllers import HumanoidRearrangeController
 from habitat.config.default import get_agent_config
 from habitat.config.default_structured_configs import (
     GfxReplayMeasureMeasurementConfig,
+    HeadRGBSensorConfig,
     PddlApplyActionConfig,
     ThirdRGBSensorConfig,
 )
@@ -517,14 +518,13 @@ GO2_GAME_WIDTH = 800
 GO2_GAME_HEIGHT = 900
 GO2_RENDER_WIDTH = GO2_GAME_WIDTH
 GO2_RENDER_HEIGHT = GO2_GAME_HEIGHT
-GO2_FOLLOW_BACK_OFFSET = 0.5
-GO2_FOLLOW_UP_OFFSET = 0.35
 GO2_FOLLOW_SENSOR = "game_rgb"
 GO2_FREE_SENSOR = "free_rgb"
 GO2_SENSORS = (GO2_FOLLOW_SENSOR, GO2_FREE_SENSOR)
 
 
-def add_go2_game_sensor_configs(agent_config):
+def add_go2_sensor_configs(agent_config):
+    agent_config.sim_sensors["head_rgb_sensor"] = HeadRGBSensorConfig()
     agent_config.sim_sensors.update(
         {
             f"{sensor_uuid}_sensor": ThirdRGBSensorConfig(
@@ -552,46 +552,9 @@ def set_visual_sensor_transform(
     )
 
 
-def get_go2_game_observations(env):
+def get_sensor_observations(env):
     env._sim.start_async_render()
     return env._sim.get_sensor_observations_async_finish()
-
-
-def get_go2_follow_camera_transform(env):
-    robot = env._sim.articulated_agent
-    robot_transform = robot.sim_obj.transformation
-    local_center = (
-        robot.sim_obj.root_scene_node.cumulative_bb.center()
-    )
-    robot_position = robot_transform.transform_point(
-        mn.Vector3(local_center)
-    )
-    forward = robot_transform.transform_vector(
-        mn.Vector3(1.0, 0.0, 0.0)
-    ).normalized()
-    up = mn.Vector3(0.0, 1.0, 0.0)
-    eye = (
-        robot_position
-        - forward * GO2_FOLLOW_BACK_OFFSET
-        + up * GO2_FOLLOW_UP_OFFSET
-    )
-    foot_height = float(
-        np.median([position.y for position in robot.foot_positions()])
-    )
-    target = mn.Vector3(
-        robot_position.x,
-        (robot_position.y + foot_height) * 0.5,
-        robot_position.z,
-    )
-    return mn.Matrix4.look_at(eye, target, up)
-
-
-def update_go2_follow_camera(env):
-    set_visual_sensor_transform(
-        env,
-        GO2_FOLLOW_SENSOR,
-        get_go2_follow_camera_transform(env),
-    )
 
 
 def get_go2_view(obs, sensor_uuid):
@@ -691,9 +654,10 @@ def play_env(env, args, config):
 
     if args.go2_game:
         place_go2_at_scene_center(env)
-        update_go2_follow_camera(env)
-        free_cam.set_view(env, get_go2_follow_camera_transform(env))
-        obs = get_go2_game_observations(env)
+        robot = env._sim.articulated_agent
+        robot.update()
+        free_cam.set_view(env, robot.follow_camera_transform)
+        obs = get_sensor_observations(env)
 
     update_idx = 0
     target_fps = 30.0 if args.go2_game else 60.0
@@ -731,6 +695,7 @@ def play_env(env, args, config):
             keys = defaultdict(lambda: False)
         else:
             keys = pygame.key.get_pressed()
+            free_cam.update(env, update_idx)
 
         if not args.no_render and is_multi_agent and keys[pygame.K_x]:
             agent_to_control += 1
@@ -801,12 +766,6 @@ def play_env(env, args, config):
             if gfx_measure is not None:
                 gfx_measure.get_metric(force_get=True)
             env.reset()
-
-        if not args.no_render:
-            free_cam.update(env, update_idx)
-        if args.go2_game:
-            update_go2_follow_camera(env)
-            step_result.update(get_go2_game_observations(env))
 
         all_arm_actions.append(arm_action)
         update_idx += 1
@@ -1018,7 +977,7 @@ if __name__ == "__main__":
         agent_config = get_agent_config(sim_config=sim_config)
 
         if args.go2_game:
-            add_go2_game_sensor_configs(agent_config)
+            add_go2_sensor_configs(agent_config)
 
         if not args.same_task:
             sim_config.debug_render = True
