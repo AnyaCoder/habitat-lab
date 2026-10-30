@@ -343,7 +343,9 @@ class EmbodiedTask:
                 action_name, action, episode
             )
 
-        self._sim.step_physics(1.0 / self._physics_target_sps)  # type:ignore
+        simulator_config = getattr(self._sim, "habitat_config", None)
+        if getattr(simulator_config, "step_physics", True):
+            self._sim.step_physics(1.0 / self._physics_target_sps)  # type:ignore
 
         if observations is None:
             observations = self._sim.step(None)
