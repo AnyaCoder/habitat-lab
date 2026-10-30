@@ -33,6 +33,8 @@ class Go2Robot(MobileManipulator):
     )
     _STAND_THIGH = 0.8
     _STAND_KNEE = -1.6
+    _BASE_HEIGHT = 0.30
+    _URDF_UPRIGHT_ROTATION = -90.0
     _LEG_SEGMENT_LENGTH = 0.213
     _GAIT_FREQUENCY = 1.8
     _MAX_STRIDE = 0.08
@@ -40,12 +42,12 @@ class Go2Robot(MobileManipulator):
     _FOLLOW_CAMERA_SENSOR = "game_rgb"
     _FOLLOW_CAMERA_BACK_OFFSET = 0.5
     _FOLLOW_CAMERA_UP_OFFSET = 0.35
-    _stand_pose = [0.0, _STAND_THIGH, _STAND_KNEE] * 4
-    _foot_link_names = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
+    _STAND_POSE = [0.0, _STAND_THIGH, _STAND_KNEE] * 4
+    _FOOT_LINK_NAMES = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
 
     def __init__(self, agent_cfg, sim, limit_robo_joints=True, fixed_base=True):
         self._gait_phase = 0.0
-        self._gait_pose = np.array(self._stand_pose, dtype=np.float32)
+        self._gait_pose = np.array(self._STAND_POSE, dtype=np.float32)
         params = MobileManipulatorParams(
             arm_joints=[],
             gripper_joints=[],
@@ -66,7 +68,7 @@ class Go2Robot(MobileManipulator):
             arm_mtr_pos_gain=0.0,
             arm_mtr_vel_gain=0.0,
             arm_mtr_max_impulse=0.0,
-            base_offset=mn.Vector3(0.0, -0.30, 0.0),
+            base_offset=mn.Vector3(0.0, -self._BASE_HEIGHT, 0.0),
             base_link_names={"base"},
             arm_init_params=np.zeros(0, dtype=np.float32),
             gripper_init_params=np.zeros(0, dtype=np.float32),
@@ -99,21 +101,25 @@ class Go2Robot(MobileManipulator):
             mn.Rad(float(rotation_y_rad)), mn.Vector3(0, 1, 0)
         )
         urdf_y_up = mn.Quaternion.rotation(
-            mn.Deg(-90), mn.Vector3(1, 0, 0)
+            mn.Deg(self._URDF_UPRIGHT_ROTATION), mn.Vector3(1, 0, 0)
         )
         self.sim_obj.rotation = yaw * urdf_y_up
 
     @property
     def base_pos(self):
-        return self.sim_obj.translation + mn.Vector3(0.0, -0.30, 0.0)
+        return self.sim_obj.translation + mn.Vector3(
+            0.0, -self._BASE_HEIGHT, 0.0
+        )
 
     @base_pos.setter
     def base_pos(self, position: mn.Vector3) -> None:
-        self.sim_obj.translation = position - mn.Vector3(0.0, -0.30, 0.0)
+        self.sim_obj.translation = position - mn.Vector3(
+            0.0, -self._BASE_HEIGHT, 0.0
+        )
 
     def foot_positions(self):
         positions = []
-        for link_name in self._foot_link_names:
+        for link_name in self._FOOT_LINK_NAMES:
             link_id = self.sim_obj.get_link_id_from_name(link_name)
             positions.append(
                 mn.Vector3(
@@ -155,14 +161,19 @@ class Go2Robot(MobileManipulator):
         sensor = self._sim.get_sensor(
             self._FOLLOW_CAMERA_SENSOR
         )._sensor_object
-        render_camera = sensor.render_camera
+        self._set_render_camera_transform(
+            sensor.render_camera, self.follow_camera_transform
+        )
+
+    @staticmethod
+    def _set_render_camera_transform(render_camera, world_transform):
         cumulative_transform = mn.Matrix4.identity_init()
         node = render_camera.node.parent
         while node is not None and hasattr(node, "transformation"):
             cumulative_transform @= node.transformation
             node = node.parent
         render_camera.node.transformation = (
-            cumulative_transform.inverted() @ self.follow_camera_transform
+            cumulative_transform.inverted() @ world_transform
         )
 
     def align_to_ground(self) -> None:
@@ -201,7 +212,7 @@ class Go2Robot(MobileManipulator):
             self.sim_obj.get_link_id_from_name(name)
             for name in self._leg_names
         ]
-        self.params.leg_init_params = list(self._stand_pose)
+        self.params.leg_init_params = list(self._STAND_POSE)
 
         for joint, target in zip(
             self.params.leg_joints, self.params.leg_init_params
@@ -221,7 +232,7 @@ class Go2Robot(MobileManipulator):
 
     def reset(self):
         self._gait_phase = 0.0
-        self._gait_pose = np.array(self._stand_pose, dtype=np.float32)
+        self._gait_pose = np.array(self._STAND_POSE, dtype=np.float32)
         super().reset()
 
     def advance_gait(self, forward, turn, dt):
@@ -273,7 +284,7 @@ class Go2Robot(MobileManipulator):
             thigh = np.arctan2(-foot_x, foot_down) - knee / 2.0
             target = np.column_stack((np.zeros(4), thigh, knee)).ravel()
         else:
-            target = np.array(self._stand_pose, dtype=np.float32)
+            target = np.array(self._STAND_POSE, dtype=np.float32)
             self._gait_phase = 0.0
 
         # Smooth starts/stops and changes of direction.
