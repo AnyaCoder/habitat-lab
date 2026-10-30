@@ -598,18 +598,47 @@ def update_go2_follow_camera(env):
     )
 
 
+def get_go2_view(obs, sensor_uuid):
+    view = obs[sensor_uuid][:, :, :3]
+    if view.shape[:2] != (GO2_GAME_HEIGHT, GO2_GAME_WIDTH):
+        view = cv2.resize(
+            view,
+            (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
+            interpolation=cv2.INTER_LINEAR,
+        )
+    return view
+
+
 def get_go2_split_view(obs):
-    views = []
-    for sensor_uuid in GO2_SENSORS:
-        view = obs[sensor_uuid][:, :, :3]
-        if view.shape[:2] != (GO2_GAME_HEIGHT, GO2_GAME_WIDTH):
-            view = cv2.resize(
-                view,
-                (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
-                interpolation=cv2.INTER_LINEAR,
+    return np.concatenate(
+        [get_go2_view(obs, sensor_uuid) for sensor_uuid in GO2_SENSORS],
+        axis=1,
+    )
+
+
+class Go2SplitPresenter:
+    """Write both camera views directly into preallocated display targets."""
+
+    def __init__(self, screen):
+        self._targets = tuple(
+            screen.subsurface(
+                (
+                    index * GO2_GAME_WIDTH,
+                    0,
+                    GO2_GAME_WIDTH,
+                    GO2_GAME_HEIGHT,
+                )
             )
-        views.append(view)
-    return np.concatenate(views, axis=1)
+            for index in range(len(GO2_SENSORS))
+        )
+
+    def draw(self, obs):
+        for sensor_uuid, target in zip(GO2_SENSORS, self._targets):
+            view = get_go2_view(obs, sensor_uuid)
+            pygame.surfarray.blit_array(
+                target, np.transpose(view, (1, 0, 2))
+            )
+        pygame.display.update()
 
 
 def place_go2_at_scene_center(env):
@@ -652,12 +681,14 @@ def play_env(env, args, config):
         else ("third_rgb" if "third_rgb" in obs else "head_rgb_sensor")
     )
     free_cam = FreeCamHelper(free_cam_sensor_name)
+    go2_presenter = None
 
     if not args.no_render:
         if args.go2_game:
             screen = pygame.display.set_mode(
                 [GO2_GAME_WIDTH * 2, GO2_GAME_HEIGHT]
             )
+            go2_presenter = Go2SplitPresenter(screen)
         else:
             draw_obs = observations_to_image(obs, {})
             screen = pygame.display.set_mode(
@@ -669,9 +700,6 @@ def play_env(env, args, config):
         update_go2_follow_camera(env)
         free_cam.set_view(env, get_go2_follow_camera_transform(env))
         obs = get_go2_game_observations(env)
-
-    if not args.no_render and args.go2_game:
-        draw_obs = get_go2_split_view(obs)
 
     update_idx = 0
     target_fps = 30.0 if args.go2_game else 60.0
@@ -802,9 +830,8 @@ def play_env(env, args, config):
         total_reward += reward
         info["Total Reward"] = total_reward
 
-        if args.go2_game:
-            use_ob = get_go2_split_view(obs)
-        elif free_cam.is_free_cam_mode:
+        use_ob = None
+        if not args.go2_game and free_cam.is_free_cam_mode:
             cam = obs[free_cam_sensor_name][:, :, :3]
             use_ob = cv2.resize(
                 cam,
@@ -812,20 +839,30 @@ def play_env(env, args, config):
                 interpolation=cv2.INTER_LINEAR,
             )
 
-        else:
+        elif not args.go2_game:
             use_ob = observations_to_image(obs, info)
             if not args.skip_render_text:
                 use_ob = overlay_frame(use_ob, info)
 
-        draw_ob = use_ob[:]
-
         if not args.no_render:
-            draw_ob = np.transpose(draw_ob, (1, 0, 2))
-            draw_obuse_ob = pygame.surfarray.make_surface(draw_ob)
-            screen.blit(draw_obuse_ob, (0, 0))
-            pygame.display.update()
+            if args.go2_game:
+                go2_presenter.draw(obs)
+            else:
+                surface = pygame.surfarray.make_surface(
+                    np.transpose(use_ob, (1, 0, 2))
+                )
+                screen.blit(surface, (0, 0))
+                pygame.display.update()
         if args.save_obs:
-            all_obs.append(draw_ob)  # type: ignore[assignment]
+            if args.go2_game:
+                saved_obs = np.transpose(
+                    get_go2_split_view(obs), (1, 0, 2)
+                )
+            elif args.no_render:
+                saved_obs = use_ob
+            else:
+                saved_obs = np.transpose(use_ob, (1, 0, 2))
+            all_obs.append(saved_obs)  # type: ignore[arg-type]
 
         if not args.no_render:
             pygame.event.pump()
