@@ -452,6 +452,13 @@ class BaseVelAction(ArticulatedAgentAction):
         self._ang_speed = self._config.ang_speed
         self._allow_back = self._config.allow_back
 
+    def _target_velocities(self, lin_vel, ang_vel):
+        target_lin_vel = float(np.clip(lin_vel, -1, 1) * self._lin_speed)
+        target_ang_vel = float(np.clip(ang_vel, -1, 1) * self._ang_speed)
+        if not self._allow_back:
+            target_lin_vel = max(target_lin_vel, 0.0)
+        return target_lin_vel, target_ang_vel
+
     @property
     def action_space(self):
         lim = 20
@@ -526,10 +533,7 @@ class BaseVelAction(ArticulatedAgentAction):
 
     def step(self, *args, **kwargs):
         lin_vel, ang_vel = kwargs[self._action_arg_prefix + "base_vel"]
-        lin_vel = np.clip(lin_vel, -1, 1) * self._lin_speed
-        ang_vel = np.clip(ang_vel, -1, 1) * self._ang_speed
-        if not self._allow_back:
-            lin_vel = np.maximum(lin_vel, 0)
+        lin_vel, ang_vel = self._target_velocities(lin_vel, ang_vel)
 
         self.base_vel_ctrl.linear_velocity = mn.Vector3(lin_vel, 0, 0)
         self.base_vel_ctrl.angular_velocity = mn.Vector3(0, ang_vel, 0)
@@ -558,33 +562,30 @@ class Go2BaseVelAction(BaseVelAction):
         self._smoothed_linear_velocity = 0.0
         self._smoothed_angular_velocity = 0.0
 
+    def _smooth_velocity(self, current, target, dt):
+        blend = 1.0 - np.exp(-dt / self._velocity_response_time)
+        smoothed = current + blend * (target - current)
+        return 0.0 if abs(smoothed) < self._velocity_epsilon else smoothed
+
     def step(self, *args, **kwargs):
         lin_vel, ang_vel = kwargs[
             self._action_arg_prefix + "base_vel"
         ]
-        target_lin_vel = float(np.clip(lin_vel, -1, 1) * self._lin_speed)
-        target_ang_vel = float(np.clip(ang_vel, -1, 1) * self._ang_speed)
-        if not self._allow_back:
-            target_lin_vel = np.maximum(target_lin_vel, 0)
+        target_lin_vel, target_ang_vel = self._target_velocities(
+            lin_vel, ang_vel
+        )
 
         dt = 1.0 / self._sim.ctrl_freq
-        blend = 1.0 - np.exp(-dt / self._velocity_response_time)
-        self._smoothed_linear_velocity += blend * (
-            target_lin_vel - self._smoothed_linear_velocity
+        self._smoothed_linear_velocity = self._smooth_velocity(
+            self._smoothed_linear_velocity,
+            target_lin_vel,
+            dt,
         )
-        self._smoothed_angular_velocity += blend * (
-            target_ang_vel - self._smoothed_angular_velocity
+        self._smoothed_angular_velocity = self._smooth_velocity(
+            self._smoothed_angular_velocity,
+            target_ang_vel,
+            dt,
         )
-        if (
-            abs(self._smoothed_linear_velocity)
-            < self._velocity_epsilon
-        ):
-            self._smoothed_linear_velocity = 0.0
-        if (
-            abs(self._smoothed_angular_velocity)
-            < self._velocity_epsilon
-        ):
-            self._smoothed_angular_velocity = 0.0
 
         self.base_vel_ctrl.linear_velocity = mn.Vector3(
             self._smoothed_linear_velocity, 0, 0

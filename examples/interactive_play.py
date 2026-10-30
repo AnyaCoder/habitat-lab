@@ -400,17 +400,6 @@ def get_input_vel_ctlr(
     return step_env(env, name, args), arm_action, end_ep
 
 
-def get_wrapped_prop(venv, prop):
-    if hasattr(venv, prop):
-        return getattr(venv, prop)
-    elif hasattr(venv, "venv"):
-        return get_wrapped_prop(venv.venv, prop)
-    elif hasattr(venv, "env"):
-        return get_wrapped_prop(venv.env, prop)
-
-    return None
-
-
 class FreeCamHelper:
     _MOVE_STEP = 0.1
     _ROTATE_STEP = 0.1
