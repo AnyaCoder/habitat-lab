@@ -27,6 +27,9 @@ habitat:
     type: RearrangeSim-v0
     seed: 100
     ctrl_freq: 30.0
+    # This view has no dynamic objects. The Go2 is kinematic and follows the
+    # NavMesh, so stepping Bullet every frame only adds collision cost.
+    step_physics: false
     habitat_sim_v0:
       enable_physics: true
   dataset:
