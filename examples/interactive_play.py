@@ -515,8 +515,8 @@ class FreeCamHelper:
 
 GO2_GAME_WIDTH = 800
 GO2_GAME_HEIGHT = 900
-GO2_RENDER_WIDTH = 480
-GO2_RENDER_HEIGHT = 540
+GO2_RENDER_WIDTH = GO2_GAME_WIDTH
+GO2_RENDER_HEIGHT = GO2_GAME_HEIGHT
 GO2_FOLLOW_BACK_OFFSET = 0.5
 GO2_FOLLOW_UP_OFFSET = 0.35
 GO2_FOLLOW_SENSOR = "game_rgb"
@@ -599,19 +599,17 @@ def update_go2_follow_camera(env):
 
 
 def get_go2_split_view(obs):
-    left = obs[GO2_FOLLOW_SENSOR][:, :, :3]
-    right = obs[GO2_FREE_SENSOR][:, :, :3]
-    left = cv2.resize(
-        left,
-        (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
-        interpolation=cv2.INTER_LINEAR,
-    )
-    right = cv2.resize(
-        right,
-        (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
-        interpolation=cv2.INTER_LINEAR,
-    )
-    return np.concatenate((left, right), axis=1)
+    views = []
+    for sensor_uuid in GO2_SENSORS:
+        view = obs[sensor_uuid][:, :, :3]
+        if view.shape[:2] != (GO2_GAME_HEIGHT, GO2_GAME_WIDTH):
+            view = cv2.resize(
+                view,
+                (GO2_GAME_WIDTH, GO2_GAME_HEIGHT),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        views.append(view)
+    return np.concatenate(views, axis=1)
 
 
 def place_go2_at_scene_center(env):
